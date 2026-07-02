@@ -141,6 +141,85 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_with_
     return synthesize_voice_clone_impl(text, conditionals, config);
 }
 
+ChatterboxVoiceConversionOutputs ChatterboxTtsComponent::synthesize_voice_conversion(
+    const runtime::AudioBuffer & source_audio,
+    const runtime::AudioBuffer & target_voice,
+    const ChatterboxVoiceConversionConfig & config) const {
+    ChatterboxVoiceConversionOutputs outputs;
+    const auto prompt_prep_memory_before = capture_backend_memory_snapshot(execution_context_);
+    const auto prompt_prep_started = std::chrono::steady_clock::now();
+    const auto ref_dict = conditionals_.prepare_generation_reference(target_voice);
+    outputs.prompt_prep_ms = engine::debug::elapsed_ms(prompt_prep_started);
+    const auto prompt_prep_memory_after = capture_backend_memory_snapshot(execution_context_);
+    outputs.prompt_prep_cuda_memory_used_before_bytes = prompt_prep_memory_before.used_bytes;
+    outputs.prompt_prep_cuda_memory_used_after_bytes = prompt_prep_memory_after.used_bytes;
+    if (prompt_prep_memory_after.available) {
+        outputs.cuda_memory_total_bytes = prompt_prep_memory_after.total_bytes;
+    } else if (prompt_prep_memory_before.available) {
+        outputs.cuda_memory_total_bytes = prompt_prep_memory_before.total_bytes;
+    }
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.prepare.total_ms", outputs.prompt_prep_ms);
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.prepare.prompt_mel_ms", ref_dict.prompt_mel_ms);
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.prepare.speaker_ms", ref_dict.speaker_ms);
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.prepare.tokenizer_ms", ref_dict.tokenizer_ms);
+
+    const auto source_tokenizer_started = std::chrono::steady_clock::now();
+    const auto source_tokens = conditionals_.tokenize_generation_audio(source_audio, std::nullopt);
+    outputs.source_tokenizer_ms = engine::debug::elapsed_ms(source_tokenizer_started);
+    outputs.source_speech_tokens = source_tokens.tokens;
+    outputs.source_speech_token_count = source_tokens.token_count;
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.source_tokenizer_ms", outputs.source_tokenizer_ms);
+
+    const auto s3gen_memory_before = capture_backend_memory_snapshot(execution_context_);
+    const auto s3gen_started = std::chrono::steady_clock::now();
+    S3GenTimingBreakdown s3gen_timing;
+    const auto s3_outputs = compute_s3gen_inference(
+        state_->s3_cache,
+        *flow_encoder_weights_,
+        *flow_decoder_weights_,
+        vocoder_,
+        ref_dict,
+        outputs.source_speech_tokens,
+        outputs.source_speech_token_count,
+        config.num_steps,
+        config.s3gen_cfg_rate,
+        true,
+        {},
+        config.seed,
+        config.seed,
+        execution_context_ != nullptr ? execution_context_->config() : engine::core::BackendConfig{},
+        &s3gen_timing);
+    outputs.s3gen_ms = engine::debug::elapsed_ms(s3gen_started);
+    const auto s3gen_memory_after = capture_backend_memory_snapshot(execution_context_);
+    outputs.s3gen_cuda_memory_used_before_bytes = s3gen_memory_before.used_bytes;
+    outputs.s3gen_cuda_memory_used_after_bytes = s3gen_memory_after.used_bytes;
+    if (s3gen_memory_after.available) {
+        outputs.cuda_memory_total_bytes = s3gen_memory_after.total_bytes;
+    }
+    outputs.waveform = s3_outputs.waveform;
+    outputs.samples = s3_outputs.samples;
+    outputs.source = s3_outputs.source;
+    outputs.source_channels = s3_outputs.source_channels;
+    outputs.source_frames = s3_outputs.source_frames;
+    outputs.mel = s3_outputs.mel;
+    outputs.mel_channels = s3_outputs.mel_channels;
+    outputs.mel_frames = s3_outputs.mel_frames;
+    apply_s3_trim_fade_like_inference(outputs.waveform, 24000);
+    outputs.s3gen_token2mel_ms = s3gen_timing.token2mel_ms;
+    outputs.s3gen_token2mel_embed_ms = s3gen_timing.token2mel_embed_ms;
+    outputs.s3gen_token2mel_encoder_ms = s3gen_timing.token2mel_encoder_ms;
+    outputs.s3gen_token2mel_mu_ms = s3gen_timing.token2mel_mu_ms;
+    outputs.s3gen_token2mel_cfm_ms = s3gen_timing.token2mel_cfm_ms;
+    outputs.s3gen_token2mel_cfm_timing = s3gen_timing.token2mel_cfm;
+    outputs.s3gen_vocoder_ms = s3gen_timing.vocoder_ms;
+    state_->s3_cache.release_runtime_graphs();
+    vocoder_.release_runtime_cache();
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.s3gen.total_ms", outputs.s3gen_ms);
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.s3gen.token2mel_ms", outputs.s3gen_token2mel_ms);
+    engine::debug::timing_log_scalar("chatterbox.voice_conversion.s3gen.vocoder_ms", outputs.s3gen_vocoder_ms);
+    return outputs;
+}
+
 ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
     const std::string & text,
     const ChatterboxConditionalsOutputs & conds,

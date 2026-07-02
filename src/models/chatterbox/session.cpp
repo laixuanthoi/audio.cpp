@@ -1,5 +1,6 @@
 #include "engine/models/chatterbox/session.h"
 
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -72,6 +73,97 @@ ChatterboxVoiceCloneConfig make_voice_clone_config(const runtime::TaskRequest & 
     return make_voice_clone_config(
         request.options,
         request.text_input.has_value() ? request.text_input->language : "en");
+}
+
+ChatterboxVoiceConversionConfig make_voice_conversion_config(const runtime::TaskRequest & request) {
+    ChatterboxVoiceConversionConfig config;
+    config.s3gen_cfg_rate = runtime::parse_float_option(request.options, {"s3gen_cfg_rate"})
+        .value_or(config.s3gen_cfg_rate);
+    config.num_steps = runtime::parse_positive_i64_option(request.options, {"num_inference_steps"}, config.num_steps);
+    config.seed = runtime::parse_u32_option(request.options, {"seed"})
+        .value_or(runtime::random_u32_seed());
+    return config;
+}
+
+void validate_positive_audio(const runtime::AudioBuffer & audio, const char * role) {
+    if (audio.sample_rate <= 0) {
+        throw std::runtime_error(std::string("Chatterbox ") + role + " audio sample rate must be positive");
+    }
+    if (audio.channels <= 0) {
+        throw std::runtime_error(std::string("Chatterbox ") + role + " audio channels must be positive");
+    }
+    if (audio.samples.empty()) {
+        throw std::runtime_error(std::string("Chatterbox ") + role + " audio must not be empty");
+    }
+    if (audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
+        throw std::runtime_error(std::string("Chatterbox ") + role + " samples must be divisible by channels");
+    }
+}
+
+runtime::AudioBuffer load_audio_buffer(const std::filesystem::path & path) {
+    const auto wav = engine::audio::read_wav_f32(path);
+    return runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
+}
+
+runtime::AudioBuffer resolve_source_audio(const runtime::TaskRequest & request) {
+    if (const auto path = runtime::find_option(request.options, {"source_audio"}); path.has_value()) {
+        auto audio = load_audio_buffer(*path);
+        validate_positive_audio(audio, "source");
+        return audio;
+    }
+    if (request.audio_input.has_value()) {
+        validate_positive_audio(*request.audio_input, "source");
+        return *request.audio_input;
+    }
+    throw std::runtime_error("Chatterbox voice conversion requires audio_input or source_audio");
+}
+
+runtime::AudioBuffer resolve_target_audio(const runtime::TaskRequest & request) {
+    if (const auto path = runtime::find_option(request.options, {"target_voice"}); path.has_value()) {
+        auto audio = load_audio_buffer(*path);
+        validate_positive_audio(audio, "target");
+        return audio;
+    }
+    if (request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->audio.has_value()) {
+        validate_positive_audio(*request.voice->speaker->audio, "target");
+        return *request.voice->speaker->audio;
+    }
+    throw std::runtime_error("Chatterbox voice conversion requires voice_ref or target_voice");
+}
+
+runtime::AudioBuffer slice_audio_frames(
+    const runtime::AudioBuffer & audio,
+    int64_t start_frame,
+    int64_t frame_count) {
+    if (audio.channels <= 0) {
+        throw std::runtime_error("Chatterbox slice_audio_frames requires positive channel count");
+    }
+    const int64_t total_frames = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
+    if (start_frame < 0 || frame_count < 0 || start_frame > total_frames) {
+        throw std::runtime_error("Chatterbox slice_audio_frames received invalid frame range");
+    }
+    const int64_t clamped_frames = std::min(frame_count, total_frames - start_frame);
+    runtime::AudioBuffer out;
+    out.sample_rate = audio.sample_rate;
+    out.channels = audio.channels;
+    const size_t begin = static_cast<size_t>(start_frame * audio.channels);
+    const size_t end = static_cast<size_t>((start_frame + clamped_frames) * audio.channels);
+    out.samples.assign(audio.samples.begin() + static_cast<std::ptrdiff_t>(begin), audio.samples.begin() + static_cast<std::ptrdiff_t>(end));
+    return out;
+}
+
+float resolve_vc_chunk_seconds(const runtime::TaskRequest & request) {
+    return runtime::parse_float_option(
+        request.options,
+        {"chatterbox.vc_chunk_seconds", "vc_chunk_seconds", "audio_chunk_duration"})
+        .value_or(15.0F);
+}
+
+float resolve_vc_chunk_threshold_seconds(const runtime::TaskRequest & request, float chunk_seconds) {
+    return runtime::parse_float_option(
+        request.options,
+        {"chatterbox.vc_chunk_threshold_seconds", "vc_chunk_threshold_seconds", "audio_chunk_threshold"})
+        .value_or(std::max(20.0F, chunk_seconds));
 }
 
 bool float_equal(float lhs, float rhs) {
@@ -265,8 +357,9 @@ ChatterboxSession::ChatterboxSession(
       component_weight_storage_type_(resolve_component_weight_storage_type(this->options())),
       mem_saver_(resolve_mem_saver(this->options())),
       conditionals_cache_(resolve_conditionals_cache_slots(this->options())) {
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox session only supports --task clon");
+    if (task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task_.task != runtime::VoiceTaskKind::VoiceConversion) {
+        throw std::runtime_error("Chatterbox session only supports --task clon or --task vc");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox session only supports offline mode");
@@ -288,6 +381,22 @@ runtime::RunMode ChatterboxSession::run_mode() const {
 }
 
 void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & request) {
+    if (task_.task == runtime::VoiceTaskKind::VoiceConversion) {
+        if (!component_) {
+            component_ = make_chatterbox_component_for_language(
+                *assets_,
+                this->options(),
+                execution_context(),
+                t3_weight_storage_type_,
+                component_weight_storage_type_,
+                mem_saver_,
+                "en");
+            component_language_ = "en";
+        }
+        mark_prepared();
+        return;
+    }
+
     if (!request.text.has_value() || request.text->text.empty()) {
         throw std::runtime_error("Chatterbox prepare requires text input");
     }
@@ -342,6 +451,9 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
 
 runtime::TaskResult ChatterboxSession::run(const runtime::TaskRequest & request) {
     require_prepared("Chatterbox run()");
+    if (task_.task == runtime::VoiceTaskKind::VoiceConversion) {
+        return run_voice_conversion(request);
+    }
     return run_voice_cloning(request);
 }
 
@@ -383,6 +495,50 @@ runtime::TaskResult ChatterboxSession::run_voice_cloning(const runtime::TaskRequ
             std::move(outputs.waveform),
         });
     }
+    result.audio_output = std::move(merged_audio);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+    return result;
+}
+
+runtime::TaskResult ChatterboxSession::run_voice_conversion(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
+    if (!component_) {
+        throw std::runtime_error("Chatterbox voice conversion requires prepared model component");
+    }
+    const auto source_audio = resolve_source_audio(request);
+    const auto target_audio = resolve_target_audio(request);
+    const auto config = make_voice_conversion_config(request);
+    const float chunk_seconds = resolve_vc_chunk_seconds(request);
+    const float chunk_threshold_seconds = resolve_vc_chunk_threshold_seconds(request, chunk_seconds);
+    if (!(chunk_seconds > 0.0F) || !(chunk_threshold_seconds > 0.0F)) {
+        throw std::runtime_error("Chatterbox voice conversion chunk settings must be positive");
+    }
+
+    const int64_t total_frames = static_cast<int64_t>(source_audio.samples.size() / static_cast<size_t>(source_audio.channels));
+    const int64_t chunk_frames = static_cast<int64_t>(chunk_seconds * static_cast<float>(source_audio.sample_rate));
+    const int64_t threshold_frames = static_cast<int64_t>(chunk_threshold_seconds * static_cast<float>(source_audio.sample_rate));
+    if (chunk_frames <= 0 || threshold_frames <= 0) {
+        throw std::runtime_error("Chatterbox voice conversion computed invalid chunk frame counts");
+    }
+
+    runtime::TaskResult result;
+    runtime::AudioBuffer merged_audio;
+    if (total_frames > threshold_frames) {
+        const int64_t chunk_count = (total_frames + chunk_frames - 1) / chunk_frames;
+        engine::debug::trace_log_scalar("chatterbox.voice_conversion.chunk_seconds", static_cast<double>(chunk_seconds));
+        engine::debug::trace_log_scalar("chatterbox.voice_conversion.chunk_threshold_seconds", static_cast<double>(chunk_threshold_seconds));
+        engine::debug::trace_log_scalar("chatterbox.voice_conversion.chunk_count", chunk_count);
+        for (int64_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index) {
+            const int64_t start_frame = chunk_index * chunk_frames;
+            const auto chunk_audio = slice_audio_frames(source_audio, start_frame, chunk_frames);
+            auto outputs = component_->synthesize_voice_conversion(chunk_audio, target_audio, config);
+            runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(outputs.waveform)});
+        }
+    } else {
+        auto outputs = component_->synthesize_voice_conversion(source_audio, target_audio, config);
+        merged_audio = runtime::AudioBuffer{24000, 1, std::move(outputs.waveform)};
+    }
+
     result.audio_output = std::move(merged_audio);
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;

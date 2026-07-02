@@ -52,6 +52,15 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 | `--num-inference-steps` | integer | Diffusion/flow denoising steps. |
 | `--text-chunk-size` | integer chars | Split long TTS text into chunks. Non-TTS models do not use text chunking. |
 
+## Voice Conversion Chunking
+
+These options are currently used by the Chatterbox `vc` path to avoid tokenizer or graph OOM on long source audio.
+
+| Option | Values | Meaning |
+|---|---|---|
+| `--vc-chunk-seconds` | float seconds | Chunk long source audio into fixed windows before conversion. |
+| `--vc-chunk-threshold-seconds` | float seconds | Only enable chunking when the source audio is longer than this threshold. |
+
 ## Batch Inputs
 
 | Option | Meaning |

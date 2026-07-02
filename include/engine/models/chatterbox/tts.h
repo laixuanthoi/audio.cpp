@@ -82,6 +82,40 @@ struct ChatterboxVoiceCloneOutputs {
     int64_t mel_frames = 0;
 };
 
+struct ChatterboxVoiceConversionConfig {
+    float s3gen_cfg_rate = 0.7f;
+    int64_t num_steps = 10;
+    uint32_t seed = 0;
+};
+
+struct ChatterboxVoiceConversionOutputs {
+    std::vector<int32_t> source_speech_tokens;
+    int64_t source_speech_token_count = 0;
+    int64_t cuda_memory_total_bytes = 0;
+    double prompt_prep_ms = 0.0;
+    double source_tokenizer_ms = 0.0;
+    double s3gen_ms = 0.0;
+    double s3gen_token2mel_ms = 0.0;
+    double s3gen_token2mel_embed_ms = 0.0;
+    double s3gen_token2mel_encoder_ms = 0.0;
+    double s3gen_token2mel_mu_ms = 0.0;
+    double s3gen_token2mel_cfm_ms = 0.0;
+    S3FlowCFMTimingBreakdown s3gen_token2mel_cfm_timing;
+    double s3gen_vocoder_ms = 0.0;
+    int64_t prompt_prep_cuda_memory_used_before_bytes = 0;
+    int64_t prompt_prep_cuda_memory_used_after_bytes = 0;
+    int64_t s3gen_cuda_memory_used_before_bytes = 0;
+    int64_t s3gen_cuda_memory_used_after_bytes = 0;
+    std::vector<float> waveform;
+    int64_t samples = 0;
+    std::vector<float> source;
+    int64_t source_channels = 0;
+    int64_t source_frames = 0;
+    std::vector<float> mel;
+    int64_t mel_channels = 0;
+    int64_t mel_frames = 0;
+};
+
 class ChatterboxTtsComponent {
 public:
     ChatterboxTtsComponent(
@@ -110,6 +144,11 @@ public:
         const std::string & text,
         const ChatterboxConditionalsOutputs & conditionals,
         const ChatterboxVoiceCloneConfig & config = {}) const;
+
+    ChatterboxVoiceConversionOutputs synthesize_voice_conversion(
+        const runtime::AudioBuffer & source_audio,
+        const runtime::AudioBuffer & target_voice,
+        const ChatterboxVoiceConversionConfig & config = {}) const;
 
 private:
     struct State;
