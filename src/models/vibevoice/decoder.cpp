@@ -1,6 +1,7 @@
 #include "engine/models/vibevoice/decoder.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -333,11 +334,21 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
         backend_type,
         "vibevoice.decoder.weights",
         weight_context_bytes);
+    const auto queue_started = std::chrono::steady_clock::now();
     weights.token_embedding = weights.store->load_tensor(
         *assets.model_weights,
         "model.language_model.embed_tokens.weight",
         weight_storage_type,
         {config.vocab_size, config.hidden_size});
+    if (config.tie_word_embeddings) {
+        weights.lm_head = weights.token_embedding;
+    } else {
+        weights.lm_head = weights.store->load_tensor(
+            *assets.model_weights,
+            assets.model_weights->require_tensor_name({"lm_head.weight", "model.lm_head.weight"}),
+            weight_storage_type,
+            {config.vocab_size, config.hidden_size});
+    }
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         weights.layers.push_back(load_layer_weights(
@@ -348,7 +359,14 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
             weight_storage_type));
     }
     weights.norm = assets.model_weights->require_f32_tensor("model.language_model.norm.weight", {config.hidden_size});
+    engine::debug::timing_log_scalar(
+        "vibevoice.runtime.decoder_weight_queue_ms",
+        engine::debug::elapsed_ms(queue_started));
+    const auto upload_started = std::chrono::steady_clock::now();
     weights.store->upload();
+    engine::debug::timing_log_scalar(
+        "vibevoice.runtime.decoder_weight_upload_ms",
+        engine::debug::elapsed_ms(upload_started));
     return weights;
 }
 
@@ -498,7 +516,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
@@ -761,7 +779,7 @@ private:
             hidden_output_ = x.tensor;
             auto logits = modules::LinearModule(
                               binding::linear_config(config.hidden_size, config.vocab_size, false))
-                              .build(ctx, x, binding::linear_data(constants_, runtime_->weights().token_embedding));
+                              .build(ctx, x, binding::linear_data(constants_, runtime_->weights().lm_head));
             logits_output_ = logits.tensor;
             graph_ = ggml_new_graph_custom(ctx_.get(), 8192, false);
             ggml_set_output(logits_output_);
@@ -1006,7 +1024,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1202,7 +1220,7 @@ public:
         hidden_output_ = x.tensor;
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
-                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().token_embedding));
+                          .build(ctx, x, binding::linear_data(constants, runtime_->weights().lm_head));
         logits_output_ = logits.tensor;
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1465,7 +1483,12 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
     if (threads_ <= 0) {
         throw std::runtime_error("VibeVoice decoder weights runtime requires positive thread count");
     }
+    const auto backend_started = std::chrono::steady_clock::now();
     backend_ = core::init_backend({backend_type, device, threads_});
+    engine::debug::timing_log_scalar(
+        "vibevoice.runtime.decoder_backend_init_ms",
+        engine::debug::elapsed_ms(backend_started));
+    const auto weights_started = std::chrono::steady_clock::now();
     weights_ = std::make_shared<VibeVoiceDecoderWeights>(
         load_vibevoice_decoder_weights(
             *assets_,
@@ -1473,6 +1496,9 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
             backend_type,
             weight_context_bytes,
             weight_storage_type));
+    engine::debug::timing_log_scalar(
+        "vibevoice.runtime.decoder_weights_load_ms",
+        engine::debug::elapsed_ms(weights_started));
     constants_ = std::make_unique<common::ConstantTensorCache>(
         backend_,
         threads_,

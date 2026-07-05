@@ -6,15 +6,19 @@
 #include "../workflow/pipeline.h"
 #include "../workflow/workflow.h"
 
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -36,7 +40,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|vulkan|metal|best\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
-        << "    --threads <n>  Backend and OpenMP worker threads, default 1\n"
+        << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
         << "    --config <id>\n"
         << "    --weight <id>\n"
@@ -48,11 +52,12 @@ void print_task_list_help() {
         << "  Batch:\n"
         << "    --request-sequence <json>  Run JSON requests in one offline session\n"
         << "    --batch-text-file <txt>  Run one offline request per non-empty line\n"
+        << "    --batch-text-dir <dir>  Run one offline request per .txt, .md, or .json file\n"
         << "    --batch-audio-dir <dir>  Run one offline request per .wav file\n"
         << "    --batch-audio-role audio|voice_ref|source_audio|target_voice|prosody_ref|style_ref\n"
         << "    --batch-merge-audio none|concat\n"
         << "    --batch-manifest-out <json>\n"
-        << "    Shared CLI inputs and options are defaults for --batch-text-file and --batch-audio-dir\n"
+        << "    Shared CLI inputs and options are defaults for --batch-text-file, --batch-text-dir, and --batch-audio-dir\n"
         << "  Pipelines:\n"
         << "    --pipeline <json>  Run a JSON app workflow instead of a raw task\n"
         << "    --list-pipelines\n"
@@ -114,7 +119,12 @@ void print_task_list_help() {
         << "  Outputs:\n"
         << "    --out <wav>\n"
         << "    --out-dir <dir>  Write named multi-audio outputs or batch request outputs\n"
+        << "    --text-out <txt>\n"
         << "    --segments-out <json>\n"
+        << "    --vad-chunks-out <json>  Write offline VAD-based chunk windows\n"
+        << "    --vad-chunk-max-seconds <float>  Maximum VAD chunk length, default 45\n"
+        << "    --vad-chunk-merge-gap-seconds <float>  Merge nearby VAD spans, default 0.5\n"
+        << "    --vad-chunk-padding-seconds <float>  Pad each VAD span before chunking, default 0.25\n"
         << "    --turns-out <json>\n"
         << "    --words-out <json>\n"
         << "    --voice-state-out <safetensors>  Export PocketTTS voice state from --voice-ref\n"
@@ -173,6 +183,7 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --text <text>\n"
             << "    --audio <wav>\n"
             << "    --batch-text-file <txt>\n"
+            << "    --batch-text-dir <dir>\n"
             << "    --language <code>\n"
             << "    --duration-seconds <float>\n"
             << "    --guidance-scale <float>\n"
@@ -190,6 +201,7 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
         std::cout
             << "    --text <text>\n"
             << "    --batch-text-file <txt>\n"
+            << "    --batch-text-dir <dir>\n"
             << "    --language <code>\n"
             << "    --voice-ref <wav>\n"
             << "    --voice-id <id>\n"
@@ -241,12 +253,20 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --audio <wav>\n"
             << "    --batch-audio-dir <dir>\n";
     }
+    if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Asr)) {
+        std::cout
+            << "    --audio-chunk-seconds <float>\n"
+            << "    --audio-chunk-mode auto|fixed|vad|none\n";
+    }
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Alignment)) {
         std::cout
             << "    --audio <wav>\n"
             << "    --batch-audio-dir <dir>\n"
             << "    --text <text>\n"
-            << "    --language <code>\n";
+            << "    --language <code>\n"
+            << "    --text-chunk-size <chars>\n"
+            << "    --audio-chunk-seconds <float>\n"
+            << "    --audio-chunk-mode auto|fixed|none\n";
     }
 }
 
@@ -274,9 +294,32 @@ void print_model_help(const engine::runtime::ModelInspection & inspection) {
     std::cout << "  Common output options:\n"
               << "    --out <wav>\n"
               << "    --out-dir <dir>\n"
+              << "    --text-out <txt>\n"
               << "    --segments-out <json>\n"
+              << "    --vad-chunks-out <json>\n"
+              << "    --vad-chunk-max-seconds <float>\n"
+              << "    --vad-chunk-merge-gap-seconds <float>\n"
+              << "    --vad-chunk-padding-seconds <float>\n"
               << "    --turns-out <json>\n"
               << "    --words-out <json>\n";
+}
+
+void write_text_output(
+    const engine::runtime::TaskResult & result,
+    const std::filesystem::path & path,
+    const std::string & label) {
+    if (!result.text_output.has_value()) {
+        throw std::runtime_error("--text-out was requested but the task result has no text output");
+    }
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    std::ofstream output(path);
+    if (!output) {
+        throw std::runtime_error("failed to open text output: " + path.string());
+    }
+    output << result.text_output->text << "\n";
+    std::cout << label << "=" << path.string() << "\n";
 }
 
 void print_task_help(const engine::runtime::ModelRegistry & registry, const std::string & task_name) {
@@ -326,6 +369,77 @@ void print_inspection(const engine::runtime::ModelInspection & inspection) {
     for (const auto & weight : inspection.discovered_weights) {
         std::cout << "weight=" << weight.id << ":" << weight.path.string() << "\n";
     }
+}
+
+bool has_vad_chunk_option(int argc, char ** argv) {
+    return minitts::cli::optional_path_arg(argc, argv, "--vad-chunks-out").has_value() ||
+        minitts::cli::find_arg(argc, argv, "--vad-chunk-max-seconds").has_value() ||
+        minitts::cli::find_arg(argc, argv, "--vad-chunk-merge-gap-seconds").has_value() ||
+        minitts::cli::find_arg(argc, argv, "--vad-chunk-padding-seconds").has_value();
+}
+
+int64_t seconds_to_samples(float seconds, int sample_rate, const std::string & name) {
+    if (seconds < 0.0F) {
+        throw std::runtime_error(name + " must be non-negative");
+    }
+    return static_cast<int64_t>(std::llround(static_cast<double>(seconds) * sample_rate));
+}
+
+engine::audio::VadAudioChunkOptions vad_chunk_options_from_cli(
+    int argc,
+    char ** argv,
+    int sample_rate) {
+    if (sample_rate <= 0) {
+        throw std::runtime_error("VAD chunk planning requires a positive audio sample rate");
+    }
+    const float max_seconds = minitts::cli::parse_optional_float_arg(argc, argv, "--vad-chunk-max-seconds").value_or(45.0F);
+    const float merge_gap_seconds = minitts::cli::parse_optional_float_arg(argc, argv, "--vad-chunk-merge-gap-seconds").value_or(0.5F);
+    const float padding_seconds = minitts::cli::parse_optional_float_arg(argc, argv, "--vad-chunk-padding-seconds").value_or(0.25F);
+    auto options = engine::audio::VadAudioChunkOptions{
+        seconds_to_samples(max_seconds, sample_rate, "--vad-chunk-max-seconds"),
+        seconds_to_samples(merge_gap_seconds, sample_rate, "--vad-chunk-merge-gap-seconds"),
+        seconds_to_samples(padding_seconds, sample_rate, "--vad-chunk-padding-seconds"),
+    };
+    if (options.max_chunk_samples <= 0) {
+        throw std::runtime_error("--vad-chunk-max-seconds must be positive");
+    }
+    return options;
+}
+
+std::string vad_chunks_to_json(const std::vector<engine::runtime::TimeSpan> & chunks) {
+    std::ostringstream out;
+    out << "[";
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        out << "{\"index\":" << i
+            << ",\"start_sample\":" << chunks[i].start_sample
+            << ",\"end_sample\":" << chunks[i].end_sample
+            << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
+void write_vad_chunks_output(
+    const engine::runtime::TaskResult & result,
+    const engine::runtime::AudioBuffer & audio,
+    const std::filesystem::path & path,
+    const engine::audio::VadAudioChunkOptions & options) {
+    if (audio.channels <= 0) {
+        throw std::runtime_error("VAD chunk planning requires positive audio channels");
+    }
+    if (audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
+        throw std::runtime_error("VAD chunk planning requires audio samples divisible by channel count");
+    }
+    const int64_t audio_frames = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
+    const auto chunks = engine::audio::plan_vad_audio_chunks(result.speech_segments, audio_frames, options);
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    std::ofstream(path) << vad_chunks_to_json(chunks);
+    std::cout << "vad_chunks_out=" << path.string() << "\n";
 }
 
 void run_streaming(
@@ -388,6 +502,9 @@ void run_streaming(
         minitts::cli::optional_path_arg(argc, argv, "--segments-out"),
         minitts::cli::optional_path_arg(argc, argv, "--turns-out"),
         minitts::cli::optional_path_arg(argc, argv, "--words-out"));
+    if (const auto text_out = minitts::cli::optional_path_arg(argc, argv, "--text-out")) {
+        write_text_output(result, *text_out, "text_out");
+    }
 }
 
 }  // namespace
@@ -427,7 +544,7 @@ int main(int argc, char ** argv) {
         const auto model_arg = find_arg(argc, argv, "--model");
         const auto pipeline_arg = find_arg(argc, argv, "--pipeline");
         if (pipeline_arg.has_value()) {
-            const int threads = parse_int_arg(argc, argv, "--threads", 1);
+            const int threads = parse_int_arg(argc, argv, "--threads", 4);
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");
             }
@@ -500,7 +617,7 @@ int main(int argc, char ** argv) {
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
         session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
-        const int threads = parse_int_arg(argc, argv, "--threads", 1);
+        const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {
             throw std::runtime_error("--threads must be positive");
         }
@@ -512,6 +629,9 @@ int main(int argc, char ** argv) {
         auto model = registry.load(load_request);
         auto session = model->create_task_session(task_spec, session_options);
         const auto voice_state_out = optional_path_arg(argc, argv, "--voice-state-out");
+        const auto text_out = optional_path_arg(argc, argv, "--text-out");
+        const auto words_out = optional_path_arg(argc, argv, "--words-out");
+        const auto vad_chunks_out = optional_path_arg(argc, argv, "--vad-chunks-out");
 
         if (has_batch_input(argc, argv)) {
             if (task_spec.mode != engine::runtime::RunMode::Offline) {
@@ -519,6 +639,9 @@ int main(int argc, char ** argv) {
             }
             if (voice_state_out.has_value()) {
                 throw std::runtime_error("--voice-state-out is not supported with batch inputs");
+            }
+            if (has_vad_chunk_option(argc, argv)) {
+                throw std::runtime_error("VAD chunk output options are not supported with batch inputs");
             }
             const auto merge_mode = minitts::app::parse_audio_merge_mode(
                 find_arg(argc, argv, "--batch-merge-audio").value_or("none"));
@@ -530,33 +653,64 @@ int main(int argc, char ** argv) {
             if (offline == nullptr) {
                 throw std::runtime_error("selected task session does not support offline execution");
             }
-            const engine::runtime::TaskRequest base_request =
+            engine::runtime::TaskRequest base_request =
                 optional_path_arg(argc, argv, "--request-sequence").has_value()
                     ? engine::runtime::TaskRequest{}
                     : build_request_from_cli(argc, argv);
-            const auto batch_request = build_batch_request_from_cli(argc, argv, base_request);
+            if (words_out.has_value()) {
+                base_request.options["return_timestamps"] = "true";
+            }
+            auto batch_request = build_batch_request_from_cli(argc, argv, base_request);
+            if (words_out.has_value()) {
+                for (auto & item : batch_request.requests) {
+                    item.request.options["return_timestamps"] = "true";
+                }
+            }
+            const minitts::app::FileOutputPolicy output_policy{
+                optional_path_arg(argc, argv, "--out"),
+                optional_path_arg(argc, argv, "--out-dir"),
+                optional_path_arg(argc, argv, "--segments-out"),
+                optional_path_arg(argc, argv, "--turns-out"),
+                words_out,
+                optional_path_arg(argc, argv, "--batch-manifest-out"),
+            };
+            std::cout << "family=" << session->family() << "\n";
+            std::cout << "task=" << engine::runtime::to_string(session->task_kind()) << "\n";
+            std::cout << "mode=" << engine::runtime::to_string(session->run_mode()) << "\n";
             const auto batch_result = minitts::app::run_offline_batch(
                 *session,
                 *offline,
                 batch_request,
-                merge_mode);
-            std::cout << "family=" << session->family() << "\n";
-            std::cout << "task=" << engine::runtime::to_string(session->task_kind()) << "\n";
-            std::cout << "mode=" << engine::runtime::to_string(session->run_mode()) << "\n";
-            minitts::app::emit_batch_result(
-                batch_result,
-                minitts::app::FileOutputPolicy{
-                    optional_path_arg(argc, argv, "--out"),
-                    optional_path_arg(argc, argv, "--out-dir"),
-                    optional_path_arg(argc, argv, "--segments-out"),
-                    optional_path_arg(argc, argv, "--turns-out"),
-                    optional_path_arg(argc, argv, "--words-out"),
-                    optional_path_arg(argc, argv, "--batch-manifest-out"),
+                merge_mode,
+                [&](size_t index, const minitts::app::AppRequestResult & item) {
+                    minitts::app::emit_batch_item_result(index, item, output_policy);
+                    if (text_out.has_value()) {
+                        const auto request_id = minitts::app::safe_output_name(item.id);
+                        const auto path = text_out->parent_path() /
+                                          (text_out->stem().string() + "_" + request_id + text_out->extension().string());
+                        write_text_output(item.result, path, "text_out[" + request_id + "]");
+                    }
                 });
+            minitts::app::emit_batch_summary(batch_result, output_policy);
             return 0;
         }
 
         auto request = build_request_from_cli(argc, argv);
+        if (has_vad_chunk_option(argc, argv)) {
+            if (task_spec.mode != engine::runtime::RunMode::Offline ||
+                task_spec.task != engine::runtime::VoiceTaskKind::Vad) {
+                throw std::runtime_error("VAD chunk output options require offline --task vad");
+            }
+            if (!vad_chunks_out.has_value()) {
+                throw std::runtime_error("VAD chunk options require --vad-chunks-out");
+            }
+            if (!request.audio_input.has_value()) {
+                throw std::runtime_error("VAD chunk output requires --audio");
+            }
+        }
+        if (words_out.has_value()) {
+            request.options["return_timestamps"] = "true";
+        }
         if (voice_state_out.has_value()) {
             if (session->family() != "pocket_tts") {
                 throw std::runtime_error("--voice-state-out is only supported by PocketTTS");
@@ -589,7 +743,17 @@ int main(int argc, char ** argv) {
                 optional_path_arg(argc, argv, "--out-dir"),
                 optional_path_arg(argc, argv, "--segments-out"),
                 optional_path_arg(argc, argv, "--turns-out"),
-                optional_path_arg(argc, argv, "--words-out"));
+                words_out);
+            if (vad_chunks_out.has_value()) {
+                write_vad_chunks_output(
+                    result,
+                    *request.audio_input,
+                    *vad_chunks_out,
+                    vad_chunk_options_from_cli(argc, argv, request.audio_input->sample_rate));
+            }
+            if (text_out.has_value()) {
+                write_text_output(result, *text_out, "text_out");
+            }
             return 0;
         }
 

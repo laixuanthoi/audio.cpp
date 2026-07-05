@@ -32,12 +32,15 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
 
 void print_help() {
     std::cout
-        << "audiocpp_server --config <server.json> [--host <ip>] [--port <port>] [--device <id>] [--threads <n>]\n"
+        << "audiocpp_server --config <server.json> [--host <ip>] [--port <port>] [--backend <backend>]\n"
+        << "                [--device <id>] [--threads <n>]\n"
         << "                [--log] [--log-file <path>]\n"
+        << "  --backend cpu|cuda|vulkan|metal  default cuda\n"
         << "\n"
         << "Endpoints:\n"
         << "  GET  /health\n"
         << "  GET  /v1/models\n"
+        << "  GET  /v1/audio/voices?model=<id>\n"
         << "  POST /v1/audio/speech\n"
         << "  POST /v1/audio/transcriptions\n"
         << "  POST /v1/tasks/run\n";
@@ -67,6 +70,9 @@ int main(int argc, char ** argv) {
         }
         if (const auto port = arg_value(argc, argv, "--port")) {
             config.port = std::stoi(*port);
+        }
+        if (const auto backend = arg_value(argc, argv, "--backend")) {
+            config.backend = minitts::server::parse_server_backend(*backend);
         }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);
