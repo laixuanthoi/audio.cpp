@@ -21,6 +21,8 @@ __pycache__/
 /target_proj/
 /nocommit/
 /perf/
+/logs/
+/windows_prebuild/
 /*.wav
 /flutter/
 /.cache/

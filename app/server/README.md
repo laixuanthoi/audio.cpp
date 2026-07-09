@@ -34,6 +34,14 @@ cat > server.json <<'JSON'
       },
       "session_options": {
         "language": "english"
+      },
+      "default_voice_preset": {
+        "voice_id": "alba"
+      },
+      "voice_presets": {
+        "cosette": {
+          "voice_id": "cosette"
+        }
       }
     },
     {
@@ -56,6 +64,70 @@ Set top-level `"lazy_load": true` to register all configured model ids at startu
 
 > [!WARNING]
 > Lazy loading does not unload models after a request. Once a model is first used, the server keeps that model and session in memory for reuse until the server exits.
+
+For streaming endpoints, configure the model with `"mode": "streaming"` and use that model id in the request. A complete example is available at `app/server/streaming_example.json`:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 1,
+  "lazy_load": true,
+  "models": [
+    {
+      "id": "voxcpm2-stream",
+      "family": "voxcpm2",
+      "path": "/path/to/models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming"
+    },
+    {
+      "id": "nemotron-stream",
+      "family": "nemotron_asr",
+      "path": "/path/to/models/nemotron-3.5-asr-streaming-0.6b",
+      "task": "asr",
+      "mode": "streaming"
+    }
+  ]
+}
+```
+
+For TTS models that need repeated voice-clone context, set a model-level `default_voice_preset` so OpenAI-compatible clients can omit `voice_ref` and `reference_text` on each request:
+
+```json
+{
+  "id": "omnivoice",
+  "family": "omnivoice",
+  "path": "/absolute/path/to/models/OmniVoice",
+  "task": "tts",
+  "mode": "offline",
+  "default_voice_preset": {
+    "voice_ref": "/absolute/path/to/reference.wav",
+    "reference_text": "Reference transcript for the reference audio."
+  }
+}
+```
+
+For multiple server-side presets, use `voice_presets` and optionally point `default_voice_preset` at one of those preset names:
+
+```json
+{
+  "voice_presets": {
+    "assistant": {
+      "voice_ref": "/absolute/path/to/assistant.wav",
+      "reference_text": "Reference transcript for assistant."
+    },
+    "narrator": {
+      "voice_id": "alba"
+    }
+  },
+  "default_voice_preset": "assistant"
+}
+```
+
+When a request sends `"voice": "assistant"`, the server uses that configured preset. When `"voice"` does not match a configured preset, it is passed through as the model-native cached voice id, preserving the previous behavior.
 
 ## Start
 
@@ -90,13 +162,33 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -d '{
     "model": "pocket-tts",
     "input": "audio.cpp is serving this request through the framework runtime.",
-    "voice_ref": "/path/to/reference.wav",
     "max_tokens": 96,
     "seed": 1234
   }'
 ```
 
+If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
+
 Set `"response_format": "json"` to receive base64 WAV in a JSON response.
+
+For streaming-capable TTS models configured with `mode: "streaming"`, `stream_format` follows the OpenAI speech streaming shape:
+
+```bash
+curl -N http://127.0.0.1:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{
+    "model": "voxcpm2-stream",
+    "input": "Stream this sentence as audio events.",
+    "response_format": "pcm",
+    "stream_format": "sse",
+    "options": {
+      "retry_badcase": false
+    }
+  }'
+```
+
+The SSE stream emits `speech.audio.delta` events with base64 PCM chunks, then `speech.audio.done`, then `data: [DONE]`. VoxCPM2 streaming requires `retry_badcase=false` because retrying a completed bad case is an offline-only behavior. Set `"stream_format": "audio"` with `"response_format": "pcm"` to receive raw PCM bytes over chunked transfer encoding instead.
 
 ### `POST /v1/audio/transcriptions`
 
@@ -122,9 +214,21 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
 
 `file` and `model` are required; `language` is optional. The uploaded bytes are spooled to a temporary file for the duration of the request and removed afterward.
 
+For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
+
+```bash
+curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F model=nemotron-stream \
+  -F language=en-US \
+  -F stream=true \
+  -F file=@/path/to/input.wav
+```
+
+The stream emits `transcript.text.delta` events, one final `transcript.text.done` event containing the full transcript, then `data: [DONE]`.
+
 ### `GET /v1/audio/voices?model=<id>`
 
-Lists the cached voice ids available for a TTS model, so a client can populate a voice picker instead of guessing generic names. For families that keep voice presets under `model_root/embeddings/*.safetensors` (`pocket_tts` today), this returns those ids; for other families, or an unknown/missing `model` parameter, it returns an empty list.
+Lists the cached voice ids and configured server voice preset names available for a TTS model, so a client can populate a voice picker instead of guessing generic names. For families that keep voice presets under `model_root/embeddings/*.safetensors` (`pocket_tts` today), this returns those ids too; for other families with no configured presets, or an unknown/missing `model` parameter, it returns an empty list.
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/audio/voices?model=pocket-tts'

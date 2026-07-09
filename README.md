@@ -28,6 +28,9 @@ Highlights:
 ## News
 
 > [!IMPORTANT]
+> **2026-07-08:** Four new ASR families are now released in the framework: Higgs Audio STT, Hviske ASR, Nemotron ASR, and VibeVoice ASR. Initial model-specific streaming support also lands for VoxCPM2 TTS, Nemotron ASR, and Higgs Audio STT, with server SSE configuration and request examples for streaming speech generation and transcription.
+
+> [!IMPORTANT]
 > **2026-07-03:** Conv1DTransp module CUDA optimization: VibeVoice reaches **5.15x realtime** on **93.9-minute long-form generation**. Overall, VibeVoice inference time was reduced by **73.17%**, PocketTTS by **35.32%**, Chatterbox by **33.56%**, Qwen3-TTS by **30.60%**, HeartMuLa by **17.03%**, and VoxCPM2 by **14.7%** compared with the previous release.
 
 > [!IMPORTANT]
@@ -53,13 +56,16 @@ Current model status in the framework:
 | **chatterbox** | TTS, voice cloning | ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | **released** |
 | **citrinet_asr** | ASR | en | Citrinet-256 | **released** |
 | **heartmula** | music generation | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss | **released** |
+| **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | **released** |
 | **htdemucs** | source separation | lang agnostic | HTDemucs, HTDemucs_ft | **released** |
+| **hviske_asr** | ASR | da | Hviske v5.3 | **released** |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | **released** |
 | **mel_band_roformer** | vocal separation | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | **released** |
 | **miocodec** | audio codec, voice conversion backend | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | **released** |
 | **miotts** | TTS, voice cloning | en, ja | MioTTS-1.7B | **released** |
 | **omnivoice** | TTS, voice cloning, voice design | 646+ langs | OmniVoice, Qwen3-0.6B based | **released** |
 | **pocket_tts** | TTS, voice cloning | en, de, it, pt, es | PocketTTS-100M | **released** |
+| **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | **released** |
 | **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B | **released** |
 | **qwen3_forced_aligner** | forced alignment | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | **released** |
 | **qwen3_tts** | TTS, voice cloning, voice design | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base, Qwen3-TTS-12Hz-1.7B-Base, Qwen3-TTS-12Hz-1.7B-CustomVoice, Qwen3-TTS-12Hz-1.7B-VoiceDesign | **released** |
@@ -69,17 +75,20 @@ Current model status in the framework:
 | **stable_audio** | music generation, sound generation, audio editing | en | Stable Audio 3 Small Music, Stable Audio 3 Small SFX, Stable Audio 3 Medium | **released** |
 | **vevo2** | TTS, singing generation, voice conversion, singing conversion, editing | en, zh | Vevo2 with Qwen2.5-0.5B AR model | **released** |
 | **vibevoice** | TTS, multi-speaker dialogue TTS | en, zh | VibeVoice-1.5B, VibeVoice-7B | **released** |
+| **vibevoice_asr** | ASR | auto | VibeVoice ASR | **released** |
 | **voxcpm2** | TTS, voice cloning, voice design | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | **released** |
-| audio_flamingo_next | audio understanding, ASR, audio captioning, audio QA | en, multilingual audio understanding | Audio Flamingo Next Instruct, Qwen2-7B based | optimization |
 | higgs_tts | TTS, voice cloning, expressive speech | 100+ languages | Higgs Audio v3 TTS 4B | testing |
 | index_tts2 | TTS, voice cloning, expressive speech | zh, en | IndexTTS-2 | testing |
 | irodori_tts | TTS, voice cloning, voice design | ja | Irodori-TTS-500M-v3, Irodori-TTS-600M-v3-VoiceDesign | testing |
 | kokoro_tts | TTS | en-us, en-gb | Kokoro-82M | testing |
 | moss_tts | TTS, voice cloning | zh, yue, en, ar, cs, da, nl, fi, fr, de, el, he, hi, hu, it, ja, ko, mk, ms, fa, pl, pt, ro, ru, es, sw, sv, tl, th, tr, vi | MOSS-TTS-Local | testing |
-| parakeet_tdt | ASR | en, es, fr, de, da, nl, fi, it, pl, pt, ru, bg, cs, el | Parakeet-TDT-0.6B-v3 | testing |
 | supertonic | TTS | en | Supertonic 3 | testing |
 
 PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
+
+## Docker
+
+Docker CPU and CUDA images are available for both CLI and server use. See [Docker.md](Docker.md) for build commands and working Docker examples.
 
 ## Build
 
@@ -92,6 +101,8 @@ For single-config generators, the default build type is `RelWithDebInfo`.
 That default configure is a CPU build unless you enable an accelerator backend explicitly.
 
 Use GCC 13 or newer for Linux builds.
+
+Native ggml CPU optimization is enabled by default for local performance. If your compiler or assembler rejects a generated CPU instruction such as `vpdpbusd`, reconfigure with `-DENGINE_ENABLE_NATIVE_CPU=OFF` to build portable CPU kernels.
 
 Common Linux configure examples:
 
@@ -111,6 +122,12 @@ Vulkan:
 
 ```bash
 cmake -S . -B build -DENGINE_ENABLE_VULKAN=ON
+```
+
+Portable CPU-kernel fallback:
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_NATIVE_CPU=OFF
 ```
 
 Build the CLI and server from the configured tree:
@@ -133,6 +150,7 @@ Examples:
 scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
 ```
 
 Use `--build-dir <dir>` only when you intentionally want a custom output directory.
@@ -170,9 +188,12 @@ If GNU Make is available on Windows:
 ```bash
 make -f Makefile.windows cpu JOBS=16
 make -f Makefile.windows cuda JOBS=16
+make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
 ```
 
-The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and the same portable CPU optimization baseline used for the Windows CUDA path. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available.
+The Windows script configures `build/windows-cuda-release` by default and builds `audiocpp_cli`. CUDA presets enable CUDA, CUDA graphs, OpenMP, Ninja, `/utf-8`, `/EHsc`, MSVC OpenMP SIMD support with `/openmp:experimental`, and native CPU optimization by default. The CPU preset uses the same MSVC/Ninja/OpenMP setup without requiring CUDA. CUDA presets auto-detect the local GPU CUDA architecture when `nvidia-smi` is available. Pass `-NativeCpu OFF` or `NATIVE_CPU=OFF` to use portable CPU kernels.
+
+For Windows prebuilt release zips and CPU compatibility profiles, see [docs/windows_build.md](docs/windows_build.md).
 
 Useful variants:
 
@@ -180,6 +201,7 @@ Useful variants:
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cuda-debug -Target audiocpp_cli
+.\scripts\build_windows.ps1 -NativeCpu OFF -Target audiocpp_cli
 .\scripts\build_windows.ps1 -ConfigureOnly
 .\scripts\build_windows.ps1 -CudaArchitectures 120a-real
 ```
@@ -214,6 +236,7 @@ scripts/build_metal.sh --target audiocpp_server
 scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
 scripts/build_metal.sh --with-tests --target audio_dsp_test
 scripts/build_metal.sh --openmp auto --target audiocpp_cli
+scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
 ```
 
 The built CLI is written to:
@@ -231,6 +254,7 @@ Build options:
 | `ENGINE_ENABLE_METAL` | Enable the ggml Metal backend. Required for `--backend metal`. | `OFF` on most platforms, `ON` on Apple |
 | `ENGINE_ENABLE_LLAMAFILE` | Enable llamafile SGEMM support in ggml CPU builds. | `ON` |
 | `ENGINE_ENABLE_CUDA_GRAPHS` | Enable ggml CUDA graphs support when CUDA is enabled. | `ON` |
+| `ENGINE_ENABLE_NATIVE_CPU` | Build ggml CPU kernels with native host ISA flags such as `-march=native`. Disable this for portable CPU kernels or toolchains that reject generated CPU instructions. | `ON` |
 | `ENGINE_ENABLE_OPENMP` | Enable OpenMP for host-side parallel work. | `ON` |
 | `ENGINE_BUILD_EXAMPLES` | Build example binaries. | `OFF` |
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
@@ -264,7 +288,7 @@ Core selectors:
 - `--model <path>`
 - `--family <name>` optionally narrows model-loader selection when a model path could match more than one family
 - `--backend cpu|cuda|vulkan|metal|best`
-- `--mode offline|streaming`
+- `--mode offline|streaming`; streaming is available for models whose docs list streaming support
 
 Common interface options:
 
@@ -275,9 +299,6 @@ Common interface options:
 - `--weight <id>` selects a discovered weight asset
 - `--device <n>` selects the backend device
 - `--threads <n>` sets backend and OpenMP worker threads
-
-> [!WARNING]
-> The CLI surface already exposes streaming-oriented arguments and request paths, but framework-wide streaming inference is not generally supported yet. The models should still be treated as offline-only.
 
 Examples:
 
@@ -410,8 +431,10 @@ Recommended top-level install packages:
 | `chatterbox` | Chatterbox | **Yes** |
 | `citrinet_asr` | Citrinet ASR converted layout | No |
 | `heartmula` | HeartMuLa | No |
+| `higgs_audio_stt` | Higgs Audio STT | No |
 | `higgs_audio_v3_tts_4b` | Higgs Audio v3 TTS 4B | **Yes** |
 | `htdemucs` | HTDemucs | No |
+| `hviske_asr` | Hviske ASR | **Yes** |
 | `irodori_tts_500m_v3` | Irodori-TTS 500M v3 | No |
 | `irodori_tts_600m_v3_voice_design` | Irodori-TTS 600M v3 VoiceDesign | No |
 | `kokoro_82m_bf16` | Kokoro 82M bf16 | **Yes** |
@@ -420,6 +443,7 @@ Recommended top-level install packages:
 | `miocodec_25hz_44k_v2` | MioCodec 25Hz 44.1kHz v2 | No |
 | `miotts_1_7b` | MioTTS 1.7B | No |
 | `moss_tts` | MOSS-TTS-Local | No |
+| `nemotron_asr` | Nemotron ASR | **Yes** |
 | `omnivoice` | OmniVoice | **Yes** |
 | `parakeet_tdt_0_6b_v3` | Parakeet TDT 0.6B v3 | **Yes** |
 | `pocket_tts` | PocketTTS | **Yes** |
@@ -438,10 +462,14 @@ Recommended top-level install packages:
 | `vevo2` | Vevo2 | No |
 | `vibevoice_1_5b` | VibeVoice 1.5B | No |
 | `vibevoice_7b` | VibeVoice 7B | No |
+| `vibevoice_asr` | VibeVoice ASR | No |
 | `voxcpm2` | VoxCPM2 | No |
 
 > [!WARNING]
 > PocketTTS is hosted in a gated Hugging Face repo, so the model manager needs a Hugging Face token with access to `kyutai/pocket-tts`. It currently downloads only the English model and the built-in `alba` voice.
+
+> [!TIP]
+> If you already have the VibeVoice Hugging Face model directory, you do not need to redownload the tokenizer files. Copy `tokenizer.json`, `tokenizer_config.json`, `vocab.json`, and `merges.txt` from `assets/model_manager/vibevoice_1_5b/` into `VibeVoice-1.5B/`, `VibeVoice-7B/`, or `VibeVoice-ASR/`.
 
 Examples:
 
@@ -568,13 +596,14 @@ The repository includes both framework-level parity validation and app-level end
 
 The main harness under `tests/` is `tests/warmbench.py`. It is used for long-lived multi-request validation, parity checks against Python references, and performance-oriented session reuse scenarios. The `tests/` tree also contains model-specific C++ and Python warmbench entrypoints that `warmbench.py` coordinates.
 
-The main app-facing test tooling under `tools/` is `tools/audiocpp_cli/run_audiocpp_cli_path_tests.py`. It drives `audiocpp_cli` through cataloged offline and streaming-shaped cases, verifies expected outputs such as audio or JSON artifacts, and is useful for checking real user-facing request paths rather than just lower-level model components. The streaming-shaped coverage here refers to the CLI/request path surface; it should not be read as a claim that streaming inference is broadly supported across the framework today.
+The main app-facing test tooling under `tools/` is `tools/audiocpp_cli/run_audiocpp_cli_path_tests.py`. It drives `audiocpp_cli` through cataloged offline and streaming cases, verifies expected outputs such as audio or JSON artifacts, and is useful for checking real user-facing request paths rather than just lower-level model components. Streaming coverage is model-specific and applies to models documented with streaming support.
 
 The Python-reference side of these tests usually requires more time-consuming setup than the C++ path because different models rely on different Python reference repos and dependency stacks. In practice, the framework-side tooling is fast to iterate on once models are installed, while Python parity runs often need extra environment preparation before they are ready.
 
 ## Projects
 
 - [Pocket TTS Browser Engine](https://github.com/jjmlovesgit/pocket-tts-browser-engine) uses audio.cpp to bring fully local PocketTTS voices into Chrome and Edge through the browser TTS API.
+- [GuideAnts](https://github.com/Elumenotion/GuideAnts) uses audio.cpp as the default local AI stack path for basic ASR and TTS, with planned reusable skills for audio.cpp scenarios and model configurations.
 
 ## Performance Metrics
 
@@ -652,7 +681,7 @@ For long-form TTS tests, each run uses the same 6,026-character, 1,028-word inpu
 
 ## Runtime Memory Options
 
-Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, and `omnivoice.mem_saver=true`. These options keep the default output path unchanged but release staged graph/cache state after request phases to reduce resident VRAM; later requests may rebuild released graphs.
+Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, and `voxcpm2.mem_saver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
 
 ## Precision/Quantization Support
 
