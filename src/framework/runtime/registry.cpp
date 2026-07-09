@@ -4,7 +4,7 @@
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
 // Development registry entries from Share/AudioCPP that are not present in this release tree yet:
-// #include "engine/models/higgs_tts/loader.h"
+#include "engine/models/higgs_tts/loader.h"
 // #include "engine/models/kokoro_tts/loader.h"
 // #include "engine/models/moss_tts/loader.h"
 // #include "engine/models/parakeet_tdt/loader.h"
@@ -212,7 +212,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
         // Development registry entries from Share/AudioCPP that are not present in this release tree yet:
         // engine::models::kokoro_tts::make_kokoro_tts_loader(),
         // engine::models::moss_tts::make_moss_tts_loader(),
-        // engine::models::higgs_tts::make_higgs_tts_loader(),
+        engine::models::higgs_tts::make_higgs_tts_loader(),
         // engine::models::parakeet_tdt::make_parakeet_tdt_loader(),
         engine::models::ace_step::make_ace_step_loader(),
         engine::models::demucs::make_htdemucs_loader(),

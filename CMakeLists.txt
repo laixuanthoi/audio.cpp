@@ -275,6 +275,19 @@ add_library(engine_runtime STATIC
     src/models/higgs_audio_stt/postprocess.cpp
     src/models/higgs_audio_stt/session.cpp
     src/models/higgs_audio_stt/loader.cpp
+    src/models/higgs_tts/assets.cpp
+    src/models/higgs_tts/codec.cpp
+    src/models/higgs_tts/codec_encoder.cpp
+    src/models/higgs_tts/codec_decoder.cpp
+    src/models/higgs_tts/utils.cpp
+    src/models/higgs_tts/sampler.cpp
+    src/models/higgs_tts/components.cpp
+    src/models/higgs_tts/weights.cpp
+    src/models/higgs_tts/generator.cpp
+    src/models/higgs_tts/qwen_decoder.cpp
+    src/models/higgs_tts/tokenizer_text.cpp
+    src/models/higgs_tts/session.cpp
+    src/models/higgs_tts/loader.cpp
     src/models/nemotron_asr/assets.cpp
     src/models/nemotron_asr/frontend.cpp
     src/models/nemotron_asr/encoder.cpp
