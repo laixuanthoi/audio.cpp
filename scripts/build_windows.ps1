@@ -153,7 +153,7 @@ function Find-VsCMake {
         return $cmake
     }
     $cmd = Get-Command "cmake.exe" -ErrorAction SilentlyContinue
-    return if ($cmd) { $cmd.Source } else { "" }
+    if ($cmd) { return $cmd.Source } else { return "" }
 }
 
 function Find-VsNinja {
@@ -163,7 +163,7 @@ function Find-VsNinja {
         return $ninja
     }
     $cmd = Get-Command "ninja.exe" -ErrorAction SilentlyContinue
-    return if ($cmd) { $cmd.Source } else { "" }
+    if ($cmd) { return $cmd.Source } else { return "" }
 }
 
 function Find-WindowsKitTool {

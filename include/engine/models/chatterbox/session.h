@@ -45,6 +45,7 @@ public:
 
 private:
     runtime::TaskResult run_voice_cloning(const runtime::TaskRequest & request);
+    runtime::TaskResult run_voice_conversion(const runtime::TaskRequest & request);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const ChatterboxAssetPaths> assets_;

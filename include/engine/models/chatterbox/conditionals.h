@@ -5,6 +5,7 @@
 #include "engine/models/chatterbox/s3gen_types.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace engine::models::chatterbox {
@@ -47,6 +48,10 @@ public:
     ChatterboxConditionalsOutputs prepare(
         const runtime::AudioBuffer & audio,
         float exaggeration = 0.5f) const;
+    EmbedReferenceOutputs prepare_generation_reference(const runtime::AudioBuffer & audio) const;
+    TokenizerOutputs tokenize_generation_audio(
+        const runtime::AudioBuffer & audio,
+        std::optional<int64_t> max_len = std::nullopt) const;
 
 private:
     engine::models::chatterbox::VoiceEncoderComponent voice_encoder_;

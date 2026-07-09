@@ -62,7 +62,7 @@ public:
         inspection.model_root = root;
         inspection.metadata.family = family();
         inspection.metadata.variant = root.filename().string();
-        inspection.metadata.description = "Chatterbox voice cloning loaded from local assets.";
+        inspection.metadata.description = "Chatterbox voice cloning and voice conversion loaded from local assets.";
         inspection.metadata.config_candidates = {
             "tokenizer.json",
             "grapheme_mtl_merged_expanded_v1.json",
@@ -77,6 +77,7 @@ public:
         };
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}},
         };
         inspection.capabilities.languages = supported_chatterbox_language_codes();
         inspection.capabilities.supports_speaker_reference = true;
@@ -129,8 +130,9 @@ const runtime::CapabilitySet & ChatterboxLoadedModel::capabilities() const noexc
 std::unique_ptr<runtime::IVoiceTaskSession> ChatterboxLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Chatterbox only supports VoiceTaskKind::VoiceCloning");
+    if (task.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task.task != runtime::VoiceTaskKind::VoiceConversion) {
+        throw std::runtime_error("Chatterbox only supports VoiceTaskKind::VoiceCloning and VoiceTaskKind::VoiceConversion");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox only supports offline mode");
@@ -145,7 +147,7 @@ std::unique_ptr<ChatterboxLoadedModel> load_chatterbox_model(const std::filesyst
     runtime::ModelMetadata metadata;
     metadata.family = "chatterbox";
     metadata.variant = root.filename().string();
-    metadata.description = "Chatterbox voice cloning loaded from local assets.";
+    metadata.description = "Chatterbox voice cloning and voice conversion loaded from local assets.";
     metadata.config_candidates = {
         "tokenizer.json",
         "grapheme_mtl_merged_expanded_v1.json",
@@ -162,6 +164,7 @@ std::unique_ptr<ChatterboxLoadedModel> load_chatterbox_model(const std::filesyst
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}},
     };
     capabilities.languages = supported_chatterbox_language_codes();
     capabilities.supports_speaker_reference = true;

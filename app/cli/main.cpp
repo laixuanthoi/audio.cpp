@@ -87,6 +87,8 @@ void print_task_list_help() {
         << "    --style-shift-steps <n>\n"
         << "    --target-duration-seconds <float>\n"
         << "    --reference-duration-seconds <float>\n"
+        << "    --vc-chunk-seconds <float>  Chunk long voice-conversion source audio before inference\n"
+        << "    --vc-chunk-threshold-seconds <float>  Only chunk VC source audio when it exceeds this length\n"
         << "    --lyrics <text>\n"
         << "    --track-name <name>\n"
         << "    --speaker <name>\n"
@@ -245,6 +247,8 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --style-shift-steps <n>\n"
             << "    --target-duration-seconds <float>\n"
             << "    --reference-duration-seconds <float>\n"
+            << "    --vc-chunk-seconds <float>\n"
+            << "    --vc-chunk-threshold-seconds <float>\n"
             << "    --num-inference-steps <n>\n"
             << "    --text-chunk-size <chars>\n"
             << "    --seed <n>\n";

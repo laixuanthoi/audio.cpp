@@ -22,33 +22,45 @@ Common options:
 
 ## Chatterbox
 
-Chatterbox is a voice-clone TTS model. The upstream Chatterbox family also documents paralinguistic tag tokens in newer variants, but the current audio.cpp integration exposes the voice-clone path rather than a separate tag-control interface.
+Chatterbox in audio.cpp now exposes both the original voice-clone TTS path and a direct voice-conversion path built on the upstream S3 tokenizer plus S3Gen stack. The upstream Chatterbox family also documents paralinguistic tag tokens in newer variants, but the current audio.cpp integration focuses on cloning and voice conversion rather than a separate tag-control interface.
 
 | Field | Value |
 |---|---|
 | Family | `chatterbox` |
 | Model directory | `models/chatterbox` |
-| Task | `clon` |
+| Task | `clon`, `vc` |
 | Modes | `offline` |
 | Languages | `ar`, `da`, `de`, `el`, `en`, `es`, `fi`, `fr`, `hi`, `it`, `ko`, `ms`, `nl`, `no`, `pl`, `pt`, `sv`, `sw`, `tr` |
-| Voice input | Required reference WAV through `--voice-ref` |
+| Voice input | `--voice-ref` for clone and conversion target voice |
 | Built-in voices | Not exposed by this integration |
+
+Voice clone:
 
 ```bash
 audiocpp_cli --task clon --family chatterbox --model models/chatterbox --backend cuda --text "Hello from Chatterbox." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
+Voice conversion:
+
+```bash
+audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend cuda --audio input.wav --voice-ref target.wav --out out.wav
+```
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--voice-ref` | WAV path | required | Reference speaker audio. |
-| `--language` | language code | `en` | Text language. |
-| `--text-chunk-size` | integer chars | `128` | Long-form chunk size. |
-| `--guidance-scale` | float | `0.5` | CFG strength. |
-| `--temperature` | float | `0.8` | T3 sampling temperature. |
-| `--top-p` | float | `0.8` | T3 nucleus sampling limit. |
-| `--repetition-penalty` | float | `2.0` | T3 repetition penalty. |
-| `--max-tokens` | integer | `1000` | Maximum generated T3 tokens per chunk. |
-| `--do-sample` | `true`, `false` | `true` | Enable stochastic T3 sampling. |
+| `--voice-ref` | WAV path | required | Reference speaker audio for cloning, or target voice for conversion. |
+| `--audio` | WAV path | required for `vc` | Source audio for direct voice conversion. |
+| `--language` | language code | `en` | Text language for `clon`. |
+| `--text-chunk-size` | integer chars | `128` | Long-form clone chunk size. |
+| `--vc-chunk-seconds` | float seconds | `15` | Source-audio chunk size for long `vc` runs. |
+| `--vc-chunk-threshold-seconds` | float seconds | `20` | Only chunk `vc` source audio when it exceeds this threshold. |
+| `--guidance-scale` | float | `0.5` | CFG strength for clone T3 generation. |
+| `--temperature` | float | `0.8` | T3 sampling temperature for clone mode. |
+| `--top-p` | float | `0.8` | T3 nucleus sampling limit for clone mode. |
+| `--repetition-penalty` | float | `2.0` | T3 repetition penalty for clone mode. |
+| `--max-tokens` | integer | `1000` | Maximum generated T3 tokens per clone chunk. |
+| `--do-sample` | `true`, `false` | `true` | Enable stochastic T3 sampling for clone mode. |
+| `--num-inference-steps` | integer | `10` | S3 flow denoising steps for `vc`. |
 
 ## Kokoro
 
